@@ -1,13 +1,12 @@
 require 'json'
 require 'parallel'
+require 'sqlite3'
 require 'time'
 
 class WordCount
 
-  WORD_MAP_PATH = "word_map.json"
-
   def initialize(input)
-    @word_map = JSON.parse(File.read(WORD_MAP_PATH)) rescue {}
+    @word_map = load_word_map_from_db
     @input = JSON.parse(File.read(input))
   end
 
@@ -17,6 +16,21 @@ class WordCount
   end
 
   private
+
+  def load_word_map_from_db
+    @db = SQLite3::Database.new("word_count.db")
+    @db.execute <<-SQL
+      create table if not exists word_count (
+        word varchar(32),
+        count int
+      );
+    SQL
+    word_map = {}
+    @db.execute("select * from word_count") do |row|
+      word_map[row.first] = row.last
+    end
+    return word_map
+  end
 
   def index_files
     # parallelize word count per file
@@ -70,7 +84,7 @@ class WordCount
   end
 
   def save_map
-    File.write(WORD_MAP_PATH, JSON.pretty_generate(@word_map) + "\n")
+    @db.execute("insert or replace into word_count values #{@word_map.map { |word, count| "('#{word}', #{count})" }.join(', ') }")
   end
 
 end
