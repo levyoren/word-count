@@ -12,39 +12,54 @@ class WordCount
   end
 
   def run
-    files = @input["index"].flat_map do |file_pattern|
-      Dir.glob(file_pattern).map do |listed_file_path|
-        listed_file_path
+    index_files
+    query_words
+  end
+
+  private
+
+  def index_files
+    # parallelize word count per file
+    book_word_maps = Parallel.map(extract_file_paths) do |file_path|
+      # map each word to a counter
+      map_word(file_path).reduce({}) do |word_map, word_count|
+        # reduce counters by word
+        reduce_word(word_map, word_count.keys.first, word_count.values.first)
       end
     end
-    Parallel.map(files) do |file_path|
-      map_count(file_path).reduce({}) do |word_map, word_count|
-        reduce_count(word_map, word_count.keys.first, word_count.values.first)
-      end
-    end.reduce(@word_map) do |word_map, book_word_map|
+    # reduce counters of all files by word
+    book_word_maps.reduce(@word_map) do |word_map, book_word_map|
       book_word_map.each do |word, count|
-        reduce_count(word_map, word, count)
+        reduce_word(word_map, word, count)
       end
       word_map
     end
     save_map
+  end
+
+  def query_words
     @input["query"].each do |word|
       query(word)
     end
   end
 
-  private
+  def extract_file_paths
+    @input["index"].flat_map do |file_pattern|
+      Dir.glob(file_pattern).map do |extracted_file_path|
+        extracted_file_path
+      end
+    end
+  end
 
   # count every alphabetical word in file as a hash of the form { "word" => 1 }
-  def map_count(file_path)
-    # puts "mapping words from #{file_path}..."
+  def map_word(file_path)
     File.read(file_path).split(/[\W\d_]+/).map do |word|
       { word.downcase => 1 }
     end
   end
 
   # add word count into the given word_map hash
-  def reduce_count(word_map, word, count)
+  def reduce_word(word_map, word, count)
     word_map[word] ||= 0
     word_map[word] += count
     return word_map
