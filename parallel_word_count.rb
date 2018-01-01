@@ -78,7 +78,7 @@ class WordCount
       reduce_word(word_map, word_count.keys.first, word_count.values.first)
     end
   rescue Exception => e
-    @logger.error {"error counting words in #{file_path.inspect}; skipping file"}
+    @logger.error {"encounted error counting words in #{file_path.inspect}; #{e.class}: #{e.message}; skipping file"}
     return {}
   end
 
