@@ -1,27 +1,58 @@
 require 'json'
 require 'logger'
 require 'parallel'
-require 'time'
 require './word_count_db'
 
 class WordCount
 
-  def initialize(input_file_path)
-    # @logger = Logger.new("word_count.log")
+  def initialize
     @logger = Logger.new(STDOUT)
     @logger.level = Logger::INFO
-    @input_file_path = input_file_path
+    init
   end
 
-  def run
+  def init
     begin
-      input = JSON.parse(File.read(@input_file_path))
       @db = WordCountDB.new("word_count", @logger)
       @word_map = @db.load_word_map
     rescue Exception => e
       @logger.fatal {"#{e.class}: #{e.message}"}
       exit(1)
     end
+  end
+
+  # count words found in files given in file list (with wilcard support)
+  def index_files(file_list)
+    Parallel.map(extract_file_paths(file_list)) do |file_path|
+      map_reduce_file_by_word(file_path)
+    end.reduce(@word_map) do |word_map, book_word_map|
+      book_word_map.each do |word, count|
+        reduce_word(word_map, word, count)
+      end
+      word_map
+    end
+    # save map to db
+    @db.save_word_map(@word_map)
+  end
+
+  # query words given in list and return a count map
+  def query_words(word_list)
+    counts = {}
+    (word_list || []).each do |word|
+      @logger.debug {"querying count for #{word.inspect}"}
+      counts[word] = @word_map[word.downcase] || 0
+    end
+    counts
+  end
+
+  # read file paths and queries from json input file of the following format:
+  # {
+  #   "index": <list of local file paths to count words from>,
+  #   "query": <list of words to query>,
+  # }
+  # return a count map for each word
+  def from_input_file(input_file_path)
+    input = JSON.parse(File.read(input_file_path))
     index_files(input["index"])
     query_words(input["query"])
   end
@@ -36,20 +67,6 @@ class WordCount
     end
     @logger.info {"extracted #{file_paths.size} file paths to index"}
     return file_paths
-  end
-
-  # count words per file in parallel and reduce counters of all files by word
-  def index_files(file_list)
-    Parallel.map(extract_file_paths(file_list)) do |file_path|
-      map_reduce_file_by_word(file_path)
-    end.reduce(@word_map) do |word_map, book_word_map|
-      book_word_map.each do |word, count|
-        reduce_word(word_map, word, count)
-      end
-      word_map
-    end
-    # save map to db
-    @db.save_word_map(@word_map)
   end
 
   # map each word in file to a single counter and reduce counters by word
@@ -76,17 +93,4 @@ class WordCount
     word_map[word] += count
     return word_map
   end
-
-  def query_words(word_list)
-    (word_list || []).each do |word|
-      @logger.debug {"querying count for #{word.inspect}"}
-      puts "#{word.inspect} count: #{@word_map[word.downcase] || 0}"
-    end
-  end
-
 end
-
-puts "#{Time.now} | Started"
-wc = WordCount.new(ARGV[0])
-wc.run
-puts "#{Time.now} | Done"
