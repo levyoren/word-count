@@ -18,9 +18,14 @@ class WordCount
       end
     end
     Parallel.map(files) do |file_path|
-      map_count(file_path)
-    end.flatten.reduce(@word_map) do |word_map, word_count|
-      reduce_count(word_map, word_count)
+      map_count(file_path).reduce({}) do |word_map, word_count|
+        reduce_count(word_map, word_count.keys.first, word_count.values.first)
+      end
+    end.reduce(@word_map) do |word_map, book_word_map|
+      book_word_map.each do |word, count|
+        reduce_count(word_map, word, count)
+      end
+      word_map
     end
     save_map
     @input["query"].each do |word|
@@ -30,6 +35,7 @@ class WordCount
 
   private
 
+  # count every alphabetical word in file as a hash of the form { "word" => 1 }
   def map_count(file_path)
     # puts "mapping words from #{file_path}..."
     File.read(file_path).split(/[\W\d_]+/).map do |word|
@@ -37,11 +43,11 @@ class WordCount
     end
   end
 
-  def reduce_count(word_map, word_count)
-    word = word_count.keys.first
+  # add word count into the given word_map hash
+  def reduce_count(word_map, word, count)
     word_map[word] ||= 0
-    word_map[word] += word_count.values.first
-    word_map
+    word_map[word] += count
+    return word_map
   end
 
   def query(word)
