@@ -1,75 +1,73 @@
 require 'json'
+require 'logger'
 require 'parallel'
-require 'sqlite3'
 require 'time'
+require './word_count_db'
 
 class WordCount
 
-  def initialize(input)
-    @word_map = load_word_map_from_db
-    @input = JSON.parse(File.read(input))
+  def initialize(input_file_path)
+    # @logger = Logger.new("word_count.log")
+    @logger = Logger.new(STDOUT)
+    @logger.level = Logger::INFO
+    @input_file_path = input_file_path
   end
 
   def run
-    index_files
-    query_words
+    begin
+      input = JSON.parse(File.read(@input_file_path))
+      @db = WordCountDB.new("word_count", @logger)
+      @word_map = @db.load_word_map
+    rescue Exception => e
+      @logger.fatal {"#{e.class}: #{e.message}"}
+      exit(1)
+    end
+    index_files(input["index"])
+    query_words(input["query"])
   end
 
   private
 
-  def load_word_map_from_db
-    @db = SQLite3::Database.new("word_count.db")
-    @db.execute <<-SQL
-      create table if not exists word_count (
-        word varchar(32),
-        count int
-      );
-    SQL
-    word_map = {}
-    @db.execute("select * from word_count") do |row|
-      word_map[row.first] = row.last
-    end
-    return word_map
-  end
-
-  def index_files
-    # parallelize word count per file
-    book_word_maps = Parallel.map(extract_file_paths) do |file_path|
-      # map each word to a counter
-      map_word(file_path).reduce({}) do |word_map, word_count|
-        # reduce counters by word
-        reduce_word(word_map, word_count.keys.first, word_count.values.first)
+  def extract_file_paths(file_list)
+    file_paths = (file_list || []).flat_map do |file_pattern|
+      Dir.glob(file_pattern).map do |extracted_file_path|
+        extracted_file_path
       end
     end
-    # reduce counters of all files by word
-    book_word_maps.reduce(@word_map) do |word_map, book_word_map|
+    @logger.info {"extracted #{file_paths.size} file paths to index"}
+    return file_paths
+  end
+
+  # count words per file in parallel and reduce counters of all files by word
+  def index_files(file_list)
+    Parallel.map(extract_file_paths(file_list)) do |file_path|
+      map_reduce_file_by_word(file_path)
+    end.reduce(@word_map) do |word_map, book_word_map|
       book_word_map.each do |word, count|
         reduce_word(word_map, word, count)
       end
       word_map
     end
-    save_map
+    # save map to db
+    @db.save_word_map(@word_map)
   end
 
-  def query_words
-    @input["query"].each do |word|
-      query(word)
+  # map each word in file to a single counter and reduce counters by word
+  def map_reduce_file_by_word(file_path)
+    @logger.debug {"counting words in #{file_path.inspect}"}
+    File.read(file_path).split(/[\W\d_]+/).map do |word|
+      map_word(word)
+    end.reduce({}) do |word_map, word_count|
+      reduce_word(word_map, word_count.keys.first, word_count.values.first)
     end
-  end
-
-  def extract_file_paths
-    @input["index"].flat_map do |file_pattern|
-      Dir.glob(file_pattern).map do |extracted_file_path|
-        extracted_file_path
-      end
-    end
+  rescue Exception => e
+    @logger.error {"error counting words in #{file_path.inspect}; skipping file"}
+    return {}
   end
 
   # count every alphabetical word in file as a hash of the form { "word" => 1 }
-  def map_word(file_path)
-    File.read(file_path).split(/[\W\d_]+/).map do |word|
-      { word.downcase => 1 }
-    end
+  def map_word(word)
+    { word.downcase => 1 }
   end
 
   # add word count into the given word_map hash
@@ -79,12 +77,11 @@ class WordCount
     return word_map
   end
 
-  def query(word)
-    puts "#{word.inspect} count: #{@word_map[word.downcase] || 0}"
-  end
-
-  def save_map
-    @db.execute("insert or replace into word_count values #{@word_map.map { |word, count| "('#{word}', #{count})" }.join(', ') }")
+  def query_words(word_list)
+    (word_list || []).each do |word|
+      @logger.debug {"querying count for #{word.inspect}"}
+      puts "#{word.inspect} count: #{@word_map[word.downcase] || 0}"
+    end
   end
 
 end
