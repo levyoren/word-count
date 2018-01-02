@@ -21,16 +21,11 @@ class WordCount
     end
   end
 
-  # count words found in files given in file list (with wilcard support)
+  # count words found in files given in file list (with wildcard support)
   def index_files(file_list)
-    Parallel.map(extract_file_paths(file_list)) do |file_path|
-      map_reduce_file_by_word(file_path)
-    end.reduce(@word_map) do |word_map, book_word_map|
-      book_word_map.each do |word, count|
-        reduce_word(word_map, word, count)
-      end
-      word_map
-    end
+    word_maps = parallel_map(file_list)
+    word_map_by_letter = shuffle_and_sort(word_maps)
+    @word_map = parallel_reduce(word_map_by_letter)
     # save map to db
     @db.save_word_map(@word_map)
   end
@@ -69,10 +64,36 @@ class WordCount
     return file_paths
   end
 
+  def parallel_map(file_list)
+    Parallel.map(extract_file_paths(file_list)) do |file_path|
+      map_reduce_file_by_word(file_path)
+    end
+  end
+
+  def shuffle_and_sort(word_maps)
+    word_maps.flat_map do |file_word_map|
+      file_word_map.map do |word, count|
+        { word => count }
+      end
+    end.group_by do |hash_count|
+      hash_count.keys.first[0]
+    end
+  end
+
+  def parallel_reduce(word_map_by_letter)
+    Parallel.map(word_map_by_letter) do |letter, words|
+      words.reduce({}) do |sub_word_map, word_count|
+        reduce_word(sub_word_map, word_count.keys.first, word_count.values.first)
+      end
+    end.reduce({}) do |full_word_map, sub_word_map|
+      full_word_map.merge!(sub_word_map)
+    end
+  end
+
   # map each word in file to a single counter and reduce counters by word
   def map_reduce_file_by_word(file_path)
     @logger.debug {"counting words in #{file_path.inspect}"}
-    File.read(file_path).split(/[\W\d_]+/).map do |word|
+    File.read(file_path, :encoding => "UTF8-MAC").split(/[\W\d_]+/).map do |word|
       map_word(word)
     end.reduce({}) do |word_map, word_count|
       reduce_word(word_map, word_count.keys.first, word_count.values.first)
