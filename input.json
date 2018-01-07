@@ -1,9 +1,11 @@
 {
   "index": [
-    "./books/war_and_peace_by_leo_tolstoy.txt"
+    "./books/*.txt"
   ],
   "query": [
     "war",
-    "peace"
+    "peace",
+    "hello",
+    "world"
   ]
 }

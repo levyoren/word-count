@@ -3,10 +3,10 @@ require 'logger'
 require 'parallel'
 require './word_count_db'
 
-class WordCount
+class ParallelWordCount
 
   def initialize
-    @logger = Logger.new(STDOUT)
+    @logger = Logger.new("./parallel_word_count.log")
     @logger.level = Logger::INFO
     init
   end

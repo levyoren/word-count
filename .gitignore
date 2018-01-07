@@ -1,4 +1,6 @@
 books/
+parallel_word_count.log
 word_count.log
 word_count.sqlite3
+word_map.json
 
